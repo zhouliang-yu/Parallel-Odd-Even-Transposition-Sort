@@ -5,11 +5,22 @@
 #include <chrono>
 
 
-int merge_sort(int n, int* a){
-    int b[n];
-    domerge_sort(a, 0, n, b);
-    return 0;
+void merge(int *ina, int lena, int *inb, int lenb, int *out) {
+    int i,j;
+    int outcount=0;
+
+    for (i=0,j=0; i<lena; i++) {
+        while ((inb[j] < ina[i]) && j < lenb) {
+            out[outcount++] = inb[j++];
+        }
+        out[outcount++] = ina[i];
+    }
+    while (j<lenb)
+        out[outcount++] = inb[j++];
+
 }
+
+
 
 int domerge_sort(int *a, int start, int end, int *b){
     if ((end - start) <= 1) return 0;
@@ -20,9 +31,14 @@ int domerge_sort(int *a, int start, int end, int *b){
     merge(&(a[start]), mid-start, &(a[mid]), end-mid, &(b[start]));
     for (int i=start; i<end; i++)
         a[i] = b[i];
-
+        
     return 0;
 
+}
+
+void merge_sort(int n, int* a){
+    int b[n];
+    domerge_sort(a, 0, n, b);
 }
 
 
@@ -73,7 +89,7 @@ int main (int argc, char **argv){
 
     int rank;
     int p;//number of processes
-    comm = MPI_COMM_WORLD;
+    MPI_Comm comm = MPI_COMM_WORLD;
     MPI_Comm_size(comm, &p); // get the number of processes
     MPI_Comm_rank(comm, &rank);  //get the rank of the current processes
 
@@ -134,7 +150,7 @@ int main (int argc, char **argv){
     printstat(rank, i-1, "after", local_a, local_n);
 
 
-    MPI_Gather(my_element, local_n, MPI_INT, sorted_elements, local_n, MPI_INT, 0, MPI_COMM_WORLD); // collect result from each process
+    MPI_Gather(local_a, local_n, MPI_INT, sorted_elements, local_n, MPI_INT, 0, MPI_COMM_WORLD); // collect result from each process
     
     /* TODO END */
 
