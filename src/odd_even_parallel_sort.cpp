@@ -1,85 +1,63 @@
 #include <mpi.h>
 #include <cstdlib>
 #include <fstream>
+#include <algorithm>
 #include <iostream>
 #include <chrono>
 
 
-void merge(int *ina, int lena, int *inb, int lenb, int *out) {
-    int i,j;
-    int outcount=0;
-
-    for (i=0,j=0; i<lena; i++) {
-        while ((inb[j] < ina[i]) && j < lenb) {
-            out[outcount++] = inb[j++];
-        }
-        out[outcount++] = ina[i];
-    }
-    while (j<lenb)
-        out[outcount++] = inb[j++];
-
+int Get_Partner(int my_rank, int phase) {
+	if (phase % 2 == 0) {
+		if (my_rank % 2 == 0) {
+			return my_rank - 1;
+		}
+		else {
+			return my_rank + 1;
+		}
+	}
+	else {
+		if (my_rank % 2 == 0) {
+			return my_rank + 1;
+		}
+		else {
+			return my_rank - 1;
+		}
+	}
 }
 
 
-
-int domerge_sort(int *a, int start, int end, int *b){
-    if ((end - start) <= 1) return 0;
-
-    int mid = (end+start)/2;
-    domerge_sort(a, start, mid, b);
-    domerge_sort(a, mid,   end, b);
-    merge(&(a[start]), mid-start, &(a[mid]), end-mid, &(b[start]));
-    for (int i=start; i<end; i++)
-        a[i] = b[i];
-        
-    return 0;
-
+void Merge_Low(int A[], int B[], int local_n) {
+	int* a = new int[local_n];		
+	int p_a = 0, p_b = 0, i = 0;	
+	while (i < local_n) {
+		if (A[p_a] < B[p_b]) {
+			a[i++] = A[p_a++];
+		}
+		else {
+			a[i++] = B[p_b++];
+		}
+	}
+	for (i = 0; i < local_n; i++) {
+		A[i] = a[i];
+	}
+	delete[] a;
 }
-
-void merge_sort(int n, int* a){
-    int b[n];
-    domerge_sort(a, 0, n, b);
-}
-
-
-void printstat(int rank, int iter, char *txt, int *la, int n) {
-    printf("[%d] %s iter %d: <", rank, txt, iter);
-    for (int j=0; j<n-1; j++)
-        printf("%6.3lf,",la[j]);
-    printf("%6.3lf>\n", la[n-1]);
-}
-
-void MPI_Pairwise_Exchange(int localn, int *locala, int sendrank, int recvrank,
-                           MPI_Comm comm) {
-
-    /*
-     * the sending rank just sends the data and waits for the results;
-     * the receiving rank receives it, sorts the combined data, and returns
-     * the correct half of the data.
-     */
-    int rank;
-    int remote[localn];
-    int all[2*localn];
-    const int mergetag = 1;
-    const int sortedtag = 2;
-
-    MPI_Comm_rank(comm, &rank);
-    if (rank == sendrank) {
-        MPI_Send(locala, localn, MPI_INT, recvrank, mergetag, MPI_COMM_WORLD);
-        MPI_Recv(locala, localn, MPI_INT, recvrank, sortedtag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-    } else {
-        MPI_Recv(remote, localn, MPI_INT, sendrank, mergetag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        merge(locala, localn, remote, localn, all);
-
-        int theirstart = 0, mystart = localn;
-        if (sendrank > rank) {
-            theirstart = localn;
-            mystart = 0;
-        }
-        MPI_Send(&(all[theirstart]), localn, MPI_INT, sendrank, sortedtag, MPI_COMM_WORLD);
-        for (int i=mystart; i<mystart+localn; i++)
-            locala[i-mystart] = all[i];
-    }
+ 
+void Merge_High(int A[], int B[], int local_n) {
+	int p_a = local_n - 1, p_b = local_n - 1, i = local_n - 1;
+	int* a = new int[local_n];
+	while (i >= 0) {
+		if (A[p_a] > B[p_b]) {
+			a[i--] = A[p_a--];
+		}
+		else {
+			a[i--] = B[p_b--];
+		}
+	}
+	for (i = 0; i < local_n; i++) {
+		A[i] = a[i];
+	}
+	delete[] a;
 }
 
 
@@ -99,7 +77,7 @@ int main (int argc, char **argv){
 
     int elements[global_n]; // store elements
     int sorted_elements[global_n]; // store sorted elements
-
+	
     if (rank == 0) { // read inputs from file (master process)
         std::ifstream input(argv[2]);
         int element;
@@ -111,11 +89,22 @@ int main (int argc, char **argv){
         std::cout << "actual number of elements:" << i << std::endl;
     }
 
+	
     std::chrono::high_resolution_clock::time_point t1;
     std::chrono::high_resolution_clock::time_point t2;
     std::chrono::duration<double> time_span;
     if (rank == 0){ 
         t1 = std::chrono::high_resolution_clock::now(); // record time
+    }
+
+    //show if 20-dim sample
+    if (global_n == 20 && rank == 0){
+        std::cout << "the input sample is:";
+        for (int i = 0; i < 20; i++){
+            std::cout << elements[i];
+            std::cout << " "; 
+        }
+        std::cout << std::endl;
     }
 
     /* TODO BEGIN
@@ -129,30 +118,41 @@ int main (int argc, char **argv){
     int local_a[local_n]; // local array
 
     MPI_Scatter(elements, local_n, MPI_INT, local_a, local_n, MPI_INT, 0, comm); // distribute elements to each process
-    merge_sort(local_n, local_a);
     
-    int i;
-    //odd-even part
-    for (i = 1; i <= p; i++) {
-
-        printstat(rank, i, "before", local_a, local_n);
-
-        if ((i + rank) % 2 == 0) {  // means i and rank have same nature
-            if (rank < p - 1) {
-                MPI_Pairwise_Exchange(local_n, local_a, rank, rank + 1, comm);
-            }
-        } else if (p > 0) {
-            MPI_Pairwise_Exchange(local_n , local_a, rank - 1, rank, comm);
-        }
-
-    }
-
-    printstat(rank, i-1, "after", local_a, local_n);
+    std::sort(local_a, local_a + local_n);
+    
+    int* new_data = new int[local_n];
+    for (int i = 0; i < p; i++) {
+		// get the pid of the process to swap data with
+		int partner = Get_Partner(rank, i);
+		// valid pid
+		if (partner != -1 && partner != p) {
+			// swap data
+			MPI_Sendrecv(local_a, local_n, MPI_INT, partner, 0, new_data, local_n, MPI_INT, partner, 0, MPI_COMM_WORLD, MPI_STATUSES_IGNORE);
+			if (rank > partner) {
+				Merge_High(local_a, new_data, local_n);
+			}
+			else {
+				Merge_Low(local_a, new_data, local_n);
+			}
+		}
+	}
+ 
 
 
     MPI_Gather(local_a, local_n, MPI_INT, sorted_elements, local_n, MPI_INT, 0, MPI_COMM_WORLD); // collect result from each process
     
     /* TODO END */
+
+    //show if 20-dim sample
+    if (global_n == 20 && rank == 0){
+        std::cout << "the outout after sort is:";
+        for (int i = 0; i < 20; i++){
+            std::cout << sorted_elements[i];
+            std::cout << " "; 
+        }
+        std::cout << std::endl;
+    }
 
     if (rank == 0){ // record time (only executed in master process)
         t2 = std::chrono::high_resolution_clock::now();  
@@ -176,5 +176,4 @@ int main (int argc, char **argv){
     
     return 0;
 }
-
 
